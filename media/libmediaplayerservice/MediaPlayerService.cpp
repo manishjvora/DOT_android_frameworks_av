@@ -626,6 +626,7 @@ MediaPlayerService::Client::Client(
     mUID = uid;
     mRetransmitEndpointValid = false;
     mAudioAttributes = NULL;
+    mListener = new Listener(this);
 
 #if CALLBACK_ANTAGONIZER
     ALOGD("create Antagonizer");
@@ -1336,25 +1337,34 @@ status_t MediaPlayerService::Client::getRetransmitEndpoint(
 void MediaPlayerService::Client::notify(
         int msg, int ext1, int ext2, const Parcel *obj)
 {
-    
     sp<IMediaPlayerClient> c;
+    sp<Client> nextClient;
+    status_t errStartNext = NO_ERROR;
     {
         Mutex::Autolock l(mLock);
         c = mClient;
         if (msg == MEDIA_PLAYBACK_COMPLETE && mNextClient != NULL) {
             nextClient = mNextClient;
-                client->mAudioOutput->switchToNextOutput();
 
-            ALOGD("gapless:current track played back");
-            ALOGD("gapless:try to do a gapless switch to next track");
+            if (mAudioOutput != NULL)
+                mAudioOutput->switchToNextOutput();
 
-            if (client->mNextClient->start() == NO_ERROR &&
-                client->mNextClient->mClient != NULL) {
-                client->mNextClient->mClient->notify(
-                        MEDIA_INFO, MEDIA_INFO_STARTED_AS_NEXT, 0, obj);
-            } else if (client->mClient != NULL) {
-                client->mClient->notify(MEDIA_ERROR, MEDIA_ERROR_UNKNOWN , 0, obj);
-                ALOGE("gapless:start playback for next track failed");
+            errStartNext = nextClient->start();
+        }
+    }
+
+    if (nextClient != NULL) {
+        sp<IMediaPlayerClient> nc;
+        {
+            Mutex::Autolock l(nextClient->mLock);
+            nc = nextClient->mClient;
+        }
+        if (nc != NULL) {
+            if (errStartNext == NO_ERROR) {
+                nc->notify(MEDIA_INFO, MEDIA_INFO_STARTED_AS_NEXT, 0, obj);
+            } else {
+                nc->notify(MEDIA_ERROR, MEDIA_ERROR_UNKNOWN , 0, obj);
+                ALOGE("gapless:start playback for next track failed, err(%d)", errStartNext);
             }
         }
     }
